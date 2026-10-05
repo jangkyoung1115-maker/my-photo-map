@@ -89,7 +89,6 @@
 
     <div id="map"></div>
 
-    <!-- 모달 창 -->
     <div id="uploadModal" class="modal">
         <div class="modal-content">
             <h3 id="modalTitle">사진 정보 입력</h3>
@@ -116,17 +115,16 @@
     </div>
 
     <script>
-        // --- 1. Firebase 초기화 (본인의 프로젝트 정보를 채워주세요) ---
+        // --- 1. Firebase 설정 ---
         const firebaseConfig = {
-  apiKey: "AIzaSy...",
-  authDomain: "your-app.firebaseapp.com",
+  apiKey: "AIzaSyCcSiUm1HhfHXLVRiP2fUmDFALGUDgYzZY",
+  authDomain: "gwangmyeong-photos.firebaseapp.com",
   databaseURL: "https://gwangmyeong-photos-default-rtdb.firebaseio.com",
-  projectId: "your-app",
-  storageBucket: "your-app.appspot.com",
-  messagingSenderId: "123456789...",
-  appId: "1:123456789...:web:abc..."
+  projectId: "gwangmyeong-photos",
+  storageBucket: "gwangmyeong-photos.firebasestorage.app",
+  messagingSenderId: "660236513672",
+  appId: "1:660236513672:web:7e3e0d36a6c07951b8ca3d"
 };
-
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
 
@@ -137,14 +135,14 @@
         let map, currentLat, currentLng, selectedImageData, formattedDate;
         let isWaitingForLocationClick = false;
         let tempMarker = null;
-        let currentPhotoId = null; // 현재 선택된 사진 ID
-        let currentPhotoPin = null; // 현재 선택된 사진 PIN
-        const markers = {}; // 마커 객체 보관용
+        let currentPhotoId = null;
+        let currentPhotoPin = null;
+        const markers = {};
 
         // --- 2. Kakao Map 초기화 ---
         const container = document.getElementById('map');
         const options = {
-            center: new kakao.maps.LatLng(37.4786, 126.8644), // 광명시청
+            center: new kakao.maps.LatLng(37.4786, 126.8644),
             level: 5
         };
         map = new kakao.maps.Map(container, options);
@@ -162,9 +160,8 @@
             }
         });
 
-        // --- 3. Firebase 데이터 실시간 동기화 (불러오기) ---
+        // --- 3. Firebase 실시간 데이터 동기화 ---
         database.ref('photos').on('value', (snapshot) => {
-            // 기존 마커 전체 지우기
             Object.values(markers).forEach(m => m.setMap(null));
             
             const data = snapshot.val();
@@ -192,7 +189,6 @@
             });
         });
 
-        // 수동 위치 지정 클릭
         kakao.maps.event.addListener(map, 'click', function(mouseEvent) {
             if (!isWaitingForLocationClick) return;
 
@@ -216,47 +212,80 @@
             document.getElementById('fileInput').click();
         }
 
+        // 이미지 파일 리사이징 (압축) 함수
+        function resizeImage(file, maxWidth, maxHeight, quality) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        let width = img.width;
+                        let height = img.height;
+
+                        if (width > height) {
+                            if (width > maxWidth) {
+                                height = Math.round((height * maxWidth) / width);
+                                width = maxWidth;
+                            }
+                        } else {
+                            if (height > maxHeight) {
+                                width = Math.round((width * maxHeight) / height);
+                                height = maxHeight;
+                            }
+                        }
+
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+
+                        resolve(canvas.toDataURL('image/jpeg', quality));
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
         async function handleImageSelect(event) {
             const file = event.target.files[0];
             if (!file) return;
 
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                selectedImageData = e.target.result;
-                document.getElementById('previewImage').src = selectedImageData;
+            // 이미지를 800px 크기로 압축하여 고속 저장 가능하게 변경
+            selectedImageData = await resizeImage(file, 800, 800, 0.7);
+            document.getElementById('previewImage').src = selectedImageData;
 
-                try {
-                    const exifrData = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate']);
-                    const photoDate = exifrData?.DateTimeOriginal || exifrData?.CreateDate;
-                    if (photoDate) {
-                        const d = new Date(photoDate);
-                        formattedDate = `촬영일: ${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
-                    } else {
-                        const today = new Date();
-                        formattedDate = `등록일: ${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
-                    }
-                } catch {
+            try {
+                const exifrData = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate']);
+                const photoDate = exifrData?.DateTimeOriginal || exifrData?.CreateDate;
+                if (photoDate) {
+                    const d = new Date(photoDate);
+                    formattedDate = `촬영일: ${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+                } else {
                     const today = new Date();
                     formattedDate = `등록일: ${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
                 }
-                document.getElementById('dateBadge').innerText = formattedDate;
+            } catch {
+                const today = new Date();
+                formattedDate = `등록일: ${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
+            }
+            document.getElementById('dateBadge').innerText = formattedDate;
 
-                try {
-                    const gps = await exifr.gps(file);
-                    if (gps && gps.latitude && gps.longitude) {
-                        currentLat = gps.latitude;
-                        currentLng = gps.longitude;
-                        document.getElementById('locationNotice').innerText = "✅ 사진의 위치 정보를 확인했습니다.";
-                        setModalMode('upload');
-                        document.getElementById('uploadModal').style.display = 'flex';
-                    } else {
-                        startLocationSelectMode();
-                    }
-                } catch {
+            try {
+                const gps = await exifr.gps(file);
+                if (gps && gps.latitude && gps.longitude) {
+                    currentLat = gps.latitude;
+                    currentLng = gps.longitude;
+                    document.getElementById('locationNotice').innerText = "✅ 사진의 위치 정보를 확인했습니다.";
+                    setModalMode('upload');
+                    document.getElementById('uploadModal').style.display = 'flex';
+                } else {
                     startLocationSelectMode();
                 }
-            };
-            reader.readAsDataURL(file);
+            } catch {
+                startLocationSelectMode();
+            }
         }
 
         function startLocationSelectMode() {
@@ -282,7 +311,7 @@
                 btnDelete.style.display = "none";
             } else if (mode === 'detail') {
                 document.getElementById('modalTitle').innerText = "사진 상세보기";
-                photoDesc.readOnly = false; // 수정 가능하도록 해둠
+                photoDesc.readOnly = false;
                 photoPin.value = "";
                 document.getElementById('pinLabel').innerText = "비밀번호 입력 (수정/삭제 시 필요)";
                 btnSubmit.style.display = "none";
@@ -291,7 +320,6 @@
             }
         }
 
-        // 마커 상세 모달 열기
         function openDetailModal(id) {
             currentPhotoId = id;
             database.ref('photos/' + id).once('value', (snapshot) => {
@@ -319,7 +347,6 @@
             document.getElementById('selectNotice').style.display = 'none';
         }
 
-        // DB 등록
         function submitPhoto() {
             const pin = document.getElementById('photoPin').value;
             const desc = document.getElementById('photoDesc').value;
@@ -328,6 +355,10 @@
                 alert("비밀번호(PIN) 4자리를 정확히 입력해 주세요.");
                 return;
             }
+
+            const btnSubmit = document.getElementById('btnSubmit');
+            btnSubmit.disabled = true;
+            btnSubmit.innerText = "저장 중...";
 
             const newPhotoRef = database.ref('photos').push();
             newPhotoRef.set({
@@ -338,6 +369,8 @@
                 desc: desc,
                 pin: pin
             }, (error) => {
+                btnSubmit.disabled = false;
+                btnSubmit.innerText = "등록하기";
                 if (error) {
                     alert("저장 실패: " + error.message);
                 } else {
@@ -347,7 +380,6 @@
             });
         }
 
-        // DB 수정
         function updatePhoto() {
             const inputPin = document.getElementById('photoPin').value;
             const newDesc = document.getElementById('photoDesc').value;
@@ -369,7 +401,6 @@
             });
         }
 
-        // DB 삭제
         function deletePhoto() {
             const inputPin = document.getElementById('photoPin').value;
 
