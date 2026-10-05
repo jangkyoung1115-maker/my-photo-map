@@ -7,7 +7,7 @@
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#2563eb">
     
-    <!-- Kakao Map API -->
+    <!-- Kakao Map API (발급받은 JavaScript 키를 입력하세요) -->
     <script type="text/javascript" src="//dapi.kakao.com/v2/maps/sdk.js?appkey=bd83a6ca29e1fbf4fa5da49d88125054"></script>
     <!-- exifr (GPS 및 촬영 날짜 추출 라이브러리) -->
     <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
@@ -37,7 +37,7 @@
             display: none; position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
             z-index: 10; background: #ef4444; color: white;
             padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: bold;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2); animation: pulse 1.5s infinite;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
         }
 
         /* 모달 스타일 */
@@ -51,7 +51,7 @@
             width: 100%; max-width: 400px; text-align: center;
             max-height: 90vh; overflow-y: auto;
         }
-        .modal img { max-width: 100%; max-height: 200px; border-radius: 8px; margin-bottom: 10px; }
+        .modal img { max-width: 100%; max-height: 250px; border-radius: 8px; object-fit: contain; margin-bottom: 10px; }
         .input-group { margin-bottom: 12px; text-align: left; }
         .input-group label { display: block; font-size: 12px; color: #64748b; margin-bottom: 4px; }
         .input-group input, .input-group textarea {
@@ -65,6 +65,12 @@
         .btn-group button { flex: 1; padding: 10px; border-radius: 6px; border: none; font-weight: bold; cursor: pointer; }
         .btn-submit { background: #2563eb; color: white; }
         .btn-cancel { background: #e2e8f0; color: #475569; }
+
+        /* 지도 마커 팝업 스타일 */
+        .info-window { padding: 10px; text-align: center; max-width: 200px; }
+        .info-window img { width: 100%; height: 120px; object-fit: cover; border-radius: 6px; margin-bottom: 5px; cursor: pointer; }
+        .info-window .date { font-size: 11px; color: #0284c7; font-weight: bold; }
+        .info-window .desc { font-size: 12px; color: #334155; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -76,28 +82,28 @@
 
     <div id="selectNotice" class="select-notice">📍 지도에서 사진이 찍힌 위치를 클릭해 주세요!</div>
 
-    <input type="file" id="fileInput" accept="image/*,text/plain" style="display: none;" onchange="handleImageSelect(event)">
+    <input type="file" id="fileInput" accept="image/*" style="display: none;" onchange="handleImageSelect(event)">
 
     <div id="map"></div>
 
-    <!-- 모달 창 -->
+    <!-- 업로드 / 상세보기 모달 창 -->
     <div id="uploadModal" class="modal">
         <div class="modal-content">
-            <h3>사진 정보 입력</h3>
+            <h3 id="modalTitle">사진 정보 입력</h3>
             <img id="previewImage" src="" alt="미리보기">
             <div id="dateBadge" class="date-badge"></div>
             <p id="locationNotice" style="font-size: 12px; color: #2563eb; margin-bottom: 10px;"></p>
-            <div class="input-group">
+            <div class="input-group" id="descGroup">
                 <label>설명</label>
                 <textarea id="photoDesc" rows="3" placeholder="사진에 대한 추억이나 설명을 적어주세요."></textarea>
             </div>
-            <div class="input-group">
+            <div class="input-group" id="pinGroup">
                 <label>비밀번호 (수정/삭제용 PIN)</label>
                 <input type="password" id="photoPin" maxlength="4" placeholder="숫자 4자리">
             </div>
             <div class="btn-group">
-                <button class="btn-cancel" onclick="closeModal()">취소</button>
-                <button class="btn-submit" onclick="submitPhoto()">등록하기</button>
+                <button class="btn-cancel" onclick="closeModal()">닫기</button>
+                <button class="btn-submit" id="btnSubmit" onclick="submitPhoto()">등록하기</button>
             </div>
         </div>
     </div>
@@ -107,19 +113,36 @@
             navigator.serviceWorker.register('/sw.js');
         }
 
-        let map, currentLat, currentLng, selectedImageFile, formattedDate;
+        let map, currentLat, currentLng, selectedImageData, formattedDate;
         let isWaitingForLocationClick = false;
         let tempMarker = null;
 
-        // 지도 초기화
+        // 1. 지도 초기화 (광명시 중심)
         const container = document.getElementById('map');
         const options = {
-            center: new kakao.maps.LatLng(37.4786, 126.8644),
+            center: new kakao.maps.LatLng(37.4786, 126.8644), // 광명시청 부근
             level: 5
         };
         map = new kakao.maps.Map(container, options);
 
-        // 지도 클릭 이벤트 핸들러 (GPS 없을 때 직접 클릭 선택)
+        // 2. 지도 축소 범위 제한 (최대 레벨 7로 제한하여 광명시를 크게 벗어나지 않게 설정)
+        map.setMaxLevel(7);
+
+        // 3. 광명시 경계 영역 설정 (이 영역 밖으로는 이동 제한)
+        const gwangmyeongBounds = new kakao.maps.LatLngBounds(
+            new kakao.maps.LatLng(37.4000, 126.8000), // 남서쪽 경계
+            new kakao.maps.LatLng(37.5300, 126.9300)  // 북동쪽 경계
+        );
+
+        // 지도 이동 시 광명시 범위를 벗어나지 않도록 감지
+        kakao.maps.event.addListener(map, 'dragend', function() {
+            const center = map.getCenter();
+            if (!gwangmyeongBounds.contain(center)) {
+                map.panTo(new kakao.maps.LatLng(37.4786, 126.8644)); // 광명시 중심으로 원복
+            }
+        });
+
+        // 수동 위치 클릭 선택 이벤트
         kakao.maps.event.addListener(map, 'click', function(mouseEvent) {
             if (!isWaitingForLocationClick) return;
 
@@ -127,15 +150,16 @@
             currentLat = latlng.getLat();
             currentLng = latlng.getLng();
 
-            // 임시 마커 표시
             if (tempMarker) tempMarker.setMap(null);
             tempMarker = new kakao.maps.Marker({ position: latlng });
             tempMarker.setMap(map);
 
-            // 위치 선택 모드 해제 및 모달창 띄우기
             isWaitingForLocationClick = false;
             document.getElementById('selectNotice').style.display = 'none';
             document.getElementById('locationNotice').innerText = "📍 지정하신 위치로 등록됩니다.";
+            
+            // 모달 입력 모드 재설정
+            setModalMode(true);
             document.getElementById('uploadModal').style.display = 'flex';
         });
 
@@ -147,53 +171,65 @@
             const file = event.target.files[0];
             if (!file) return;
 
-            selectedImageFile = file;
-
-            // 미리보기 세팅
             const reader = new FileReader();
-            reader.onload = (e) => {
-                document.getElementById('previewImage').src = e.target.result;
-            };
-            reader.readAsDataURL(file);
+            reader.onload = async (e) => {
+                selectedImageData = e.target.result;
+                document.getElementById('previewImage').src = selectedImageData;
 
-            // 날짜 추출
-            try {
-                const exifrData = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate']);
-                const photoDate = exifrData?.DateTimeOriginal || exifrData?.CreateDate;
-                if (photoDate) {
-                    const d = new Date(photoDate);
-                    formattedDate = `촬영일: ${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
-                } else {
+                // 날짜 추출
+                try {
+                    const exifrData = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate']);
+                    const photoDate = exifrData?.DateTimeOriginal || exifrData?.CreateDate;
+                    if (photoDate) {
+                        const d = new Date(photoDate);
+                        formattedDate = `촬영일: ${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+                    } else {
+                        const today = new Date();
+                        formattedDate = `등록일: ${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
+                    }
+                } catch {
                     const today = new Date();
                     formattedDate = `등록일: ${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
                 }
-            } catch {
-                const today = new Date();
-                formattedDate = `등록일: ${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
-            }
-            document.getElementById('dateBadge').innerText = formattedDate;
+                document.getElementById('dateBadge').innerText = formattedDate;
 
-            // GPS 추출 검사
-            try {
-                const gps = await exifr.gps(file);
-                if (gps && gps.latitude && gps.longitude) {
-                    currentLat = gps.latitude;
-                    currentLng = gps.longitude;
-                    document.getElementById('locationNotice').innerText = "✅ 사진의 GPS 위치를 추출했습니다.";
-                    document.getElementById('uploadModal').style.display = 'flex';
-                } else {
+                // GPS 추출
+                try {
+                    const gps = await exifr.gps(file);
+                    if (gps && gps.latitude && gps.longitude) {
+                        currentLat = gps.latitude;
+                        currentLng = gps.longitude;
+                        document.getElementById('locationNotice').innerText = "✅ 사진의 위치 정보를 확인했습니다.";
+                        setModalMode(true);
+                        document.getElementById('uploadModal').style.display = 'flex';
+                    } else {
+                        startLocationSelectMode();
+                    }
+                } catch {
                     startLocationSelectMode();
                 }
-            } catch {
-                startLocationSelectMode();
-            }
+            };
+            reader.readAsDataURL(file);
         }
 
-        // 수동 위치 선택 안내
         function startLocationSelectMode() {
             isWaitingForLocationClick = true;
             document.getElementById('selectNotice').style.display = 'block';
-            alert("사진에 위치 정보(GPS)가 없습니다.\n확인을 누른 뒤 지도의 정확한 위치를 클릭해 주세요!");
+            alert("사진에 위치 정보가 없습니다.\n확인을 누르신 후, 지도의 정확한 위치를 클릭해 주세요!");
+        }
+
+        function setModalMode(isUpload) {
+            if (isUpload) {
+                document.getElementById('modalTitle').innerText = "사진 정보 입력";
+                document.getElementById('descGroup').style.display = "block";
+                document.getElementById('pinGroup').style.display = "block";
+                document.getElementById('btnSubmit').style.display = "block";
+            } else {
+                document.getElementById('modalTitle').innerText = "사진 상세보기";
+                document.getElementById('descGroup').style.display = "none";
+                document.getElementById('pinGroup').style.display = "none";
+                document.getElementById('btnSubmit').style.display = "none";
+            }
         }
 
         function closeModal() {
@@ -206,6 +242,8 @@
 
         function submitPhoto() {
             const pin = document.getElementById('photoPin').value;
+            const desc = document.getElementById('photoDesc').value;
+
             if (!pin) {
                 alert("비밀번호(PIN)를 입력해 주세요.");
                 return;
@@ -215,11 +253,36 @@
             const marker = new kakao.maps.Marker({ position: locPosition });
             marker.setMap(map);
 
-            if (tempMarker) tempMarker.setMap(null);
+            // 마커 클릭 시 인포윈도우(미리보기) 표시
+            const iwContent = `
+                <div class="info-window">
+                    <img src="${selectedImageData}" onclick="openImageDetail('${selectedImageData}', '${formattedDate}', '${desc}')">
+                    <div class="date">${formattedDate}</div>
+                    <div class="desc">${desc}</div>
+                </div>
+            `;
+            const infowindow = new kakao.maps.InfoWindow({
+                content: iwContent,
+                removable: true
+            });
 
+            kakao.maps.event.addListener(marker, 'click', function() {
+                infowindow.open(map, marker);
+            });
+
+            if (tempMarker) tempMarker.setMap(null);
             map.panTo(locPosition);
             alert("사진이 성공적으로 등록되었습니다!");
             closeModal();
+        }
+
+        // 마커 및 사진 클릭 시 큰 모달창으로 사진 원본 보기
+        function openImageDetail(imgSrc, dateText, descText) {
+            document.getElementById('previewImage').src = imgSrc;
+            document.getElementById('dateBadge').innerText = dateText;
+            document.getElementById('locationNotice').innerText = descText || "";
+            setModalMode(false);
+            document.getElementById('uploadModal').style.display = 'flex';
         }
     </script>
 </body>
